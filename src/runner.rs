@@ -11,6 +11,8 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 /// Outcome of the loop execution
@@ -38,17 +40,27 @@ pub struct LoopRunner {
     plan_path: PathBuf,
     progress_path: PathBuf,
     config_path: PathBuf,
+    stop_flag: Arc<AtomicBool>,
 }
 
 impl LoopRunner {
     pub fn new(work_dir: &Path, plan_path: PathBuf) -> Result<Self> {
         let rwl_dir = Config::local_config_dir(work_dir);
 
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        let flag_clone = stop_flag.clone();
+        ctrlc::set_handler(move || {
+            eprintln!("\n{} Received Ctrl-C, finishing current iteration...", "⚠".yellow());
+            flag_clone.store(true, Ordering::SeqCst);
+        })
+        .context("Failed to set Ctrl-C handler")?;
+
         Ok(Self {
             work_dir: work_dir.to_path_buf(),
             plan_path,
             progress_path: rwl_dir.join("progress.txt"),
             config_path: Config::local_config_path(work_dir),
+            stop_flag,
         })
     }
 
@@ -73,6 +85,19 @@ impl LoopRunner {
         pb.set_position((start_iteration - 1) as u64);
 
         for iteration in start_iteration..=config.loop_config.max_iterations {
+            // 0. Check for stop signal (Ctrl-C)
+            if self.stop_flag.load(Ordering::SeqCst) {
+                pb.finish_with_message("stopped");
+                // Auto-commit WIP before exiting
+                if config.git.auto_commit {
+                    let _ = self.git_auto_commit(iteration, &config);
+                }
+                return Ok(LoopOutcome::Stopped {
+                    iterations: iteration - 1,
+                    reason: "Received Ctrl-C".to_string(),
+                });
+            }
+
             pb.set_message(format!("iteration {}", iteration));
             pb.set_position((iteration - 1) as u64);
 
