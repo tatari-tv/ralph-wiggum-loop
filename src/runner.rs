@@ -8,6 +8,7 @@ use eyre::{Context, Result};
 use handlebars::Handlebars;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::collections::HashMap;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -194,7 +195,7 @@ impl LoopRunner {
         Ok(prompt)
     }
 
-    /// Run Claude CLI with the given prompt, enforcing iteration timeout
+    /// Run Claude CLI with the given prompt, streaming output and enforcing timeout
     fn run_claude(&self, prompt: &str, config: &Config) -> Result<String> {
         // Check if claude binary exists
         which::which("claude")
@@ -220,46 +221,57 @@ impl LoopRunner {
 
         let mut child = cmd.spawn().context("Failed to spawn claude command")?;
 
+        // Stream stdout in a background thread while capturing it
+        let child_stdout = child.stdout.take();
+        let stdout_handle = std::thread::spawn(move || {
+            let mut captured = String::new();
+            if let Some(stdout) = child_stdout {
+                let reader = BufReader::new(stdout);
+                for line in reader.lines() {
+                    match line {
+                        Ok(line) => {
+                            println!("  {}", line.dimmed());
+                            captured.push_str(&line);
+                            captured.push('\n');
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
+            captured
+        });
+
+        // Stream stderr in a background thread while capturing it
+        let child_stderr = child.stderr.take();
+        let stderr_handle = std::thread::spawn(move || {
+            let mut captured = String::new();
+            if let Some(stderr) = child_stderr {
+                let reader = BufReader::new(stderr);
+                for line in reader.lines() {
+                    match line {
+                        Ok(line) => {
+                            eprintln!("  {}", line.dimmed());
+                            captured.push_str(&line);
+                            captured.push('\n');
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
+            captured
+        });
+
         // Wait with timeout
         let start = std::time::Instant::now();
         loop {
             match child.try_wait().context("Failed to check claude process status")? {
-                Some(status) => {
-                    // Process finished
-                    let stdout = String::from_utf8_lossy(
-                        &child
-                            .stdout
-                            .take()
-                            .map(|mut s| {
-                                let mut buf = Vec::new();
-                                std::io::Read::read_to_end(&mut s, &mut buf).ok();
-                                buf
-                            })
-                            .unwrap_or_default(),
-                    )
-                    .to_string();
-                    let stderr = String::from_utf8_lossy(
-                        &child
-                            .stderr
-                            .take()
-                            .map(|mut s| {
-                                let mut buf = Vec::new();
-                                std::io::Read::read_to_end(&mut s, &mut buf).ok();
-                                buf
-                            })
-                            .unwrap_or_default(),
-                    )
-                    .to_string();
-
-                    if !status.success() && !stderr.is_empty() {
-                        eprintln!("{}", stderr.dimmed());
-                    }
-
+                Some(_status) => {
+                    let stdout = stdout_handle.join().unwrap_or_default();
+                    let stderr = stderr_handle.join().unwrap_or_default();
                     return Ok(format!("{}\n{}", stdout, stderr));
                 }
                 None => {
                     if start.elapsed() >= timeout {
-                        // Kill the process on timeout
                         let _ = child.kill();
                         let _ = child.wait();
                         return Err(eyre::eyre!(
