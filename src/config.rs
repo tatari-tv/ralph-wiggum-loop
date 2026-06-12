@@ -131,10 +131,37 @@ impl Default for Config {
     }
 }
 
+/// XDG config dir, honoring `$XDG_CONFIG_HOME` and falling back to `$HOME/.config`.
+pub fn xdg_config_dir() -> Option<PathBuf> {
+    if let Ok(dir) = std::env::var("XDG_CONFIG_HOME") {
+        let path = PathBuf::from(dir);
+        if path.is_absolute() {
+            return Some(path);
+        }
+    }
+    dirs::home_dir().map(|h| h.join(".config"))
+}
+
+/// XDG data dir, honoring `$XDG_DATA_HOME` and falling back to `$HOME/.local/share`.
+///
+/// We deliberately do NOT use the `dirs` config/data helpers: those honor
+/// `$XDG_CONFIG_HOME` / `$XDG_DATA_HOME` only on Linux. On macOS they resolve via system
+/// APIs and return `~/Library/...`, ignoring the env vars. These helpers resolve to the
+/// same XDG layout on every platform.
+pub fn xdg_data_dir() -> Option<PathBuf> {
+    if let Ok(dir) = std::env::var("XDG_DATA_HOME") {
+        let path = PathBuf::from(dir);
+        if path.is_absolute() {
+            return Some(path);
+        }
+    }
+    dirs::home_dir().map(|h| h.join(".local").join("share"))
+}
+
 impl Config {
     /// Get the global config directory path
     pub fn global_config_dir() -> Option<PathBuf> {
-        dirs::config_dir().map(|d| d.join("rwl"))
+        xdg_config_dir().map(|d| d.join("rwl"))
     }
 
     /// Get the global config file path

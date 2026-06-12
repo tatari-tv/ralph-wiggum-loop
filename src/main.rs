@@ -16,7 +16,7 @@ mod validation;
 use cli::{Cli, Commands};
 
 fn setup_logging() -> Result<()> {
-    let log_dir = dirs::data_local_dir()
+    let log_dir = config::xdg_data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("rwl")
         .join("logs");
