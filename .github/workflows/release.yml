@@ -1,0 +1,29 @@
+name: release
+
+# Thin caller: delegates the tag-driven cross-compile -> tarball + sha256 ->
+# GitHub Release to the shared public reusable. Artifacts stay byte-for-byte
+# named rwl-<tag>-<suffix>.tar.gz(.sha256). The crate is ralph-wiggum-loop but
+# the binary is `rwl`, so bin-names picks the right file out of target/.../release,
+# and archive-prefix names the tarball `rwl` to match every prior release.
+# Both inputs are mandatory here: without bin-names the reusable would cp a
+# nonexistent `ralph-wiggum-loop` binary and hard-fail.
+#
+# Tag-push trigger only (no workflow_dispatch): the reusable's publish job has no
+# tag-ref guard, so a manual dispatch on a branch would cut a Release named after
+# the branch. Replaces the old self-contained release-and-publish.yml (which only
+# ever published a GitHub Release, despite the name).
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    uses: tatari-tv/github-actions-public/.github/workflows/rust-cli-release.yml@v1
+    with:
+      bin-names: rwl
+      archive-prefix: rwl
