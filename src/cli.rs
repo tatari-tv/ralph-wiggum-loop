@@ -5,7 +5,7 @@ use std::path::PathBuf;
 #[command(
     name = "rwl",
     about = "Ralph Wiggum Loop - Iterative AI-assisted development",
-    version = env!("GIT_DESCRIBE"),
+    version = concat!("v", env!("CARGO_PKG_VERSION")),
     after_help = "Logs are written to: ~/.local/share/rwl/logs/rwl.log"
 )]
 pub struct Cli {
